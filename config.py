@@ -1,6 +1,7 @@
 import os
 
 
+RELEVANT_LABELS = ['person', 'organization', 'location']
 UID_LEN = 12
 EMBEDDING_SIZE = 768
 EMBEDDING_MODEL_CHECKPOINT = 'jinaai/jina-embeddings-v2-base-de'

@@ -1,15 +1,13 @@
 import os
 
 import numpy as np
-from neo4j import GraphDatabase, RoutingControl
 from fundus.scraping.article import Article
 from fundus.scraping.html import SourceInfo
-
-# from neo4j.exceptions import DriverError, Neo4jError
+from langchain.graphs import Neo4jGraph
 
 import config
-from schema import ArticleChunk, Iterable
-from utils import generate_short_uid
+from schema import ArticleChunk, Entity, Iterable
+from utils import generate_short_uid, generate_full_text_query
 
 
 # URI examples: "neo4j://localhost", "neo4j+s://xxx.databases.neo4j.io"
@@ -20,19 +18,19 @@ AUTH = (USERNAME, PASSWORD)
 
 
 class NewsGraphClient:
-    def __init__(self, uri:str=URI, user:str=USERNAME, password:str=PASSWORD, database:str|None=None):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
-        self.database = database
+    def __init__(self, uri:str=URI, user:str=USERNAME, password:str=PASSWORD, **db_kwargs):
+        self.graph = Neo4jGraph(
+            url=uri, 
+            username=user, 
+            password=password,
+            **db_kwargs
+        )
     
-    def close(self):
-        self.driver.close()
-
     def create_article(self, article: Article) -> str:
         query = (
             "CREATE (a:Article { title: $title, publishing_date: $date, language: $language, url: $url, uid: $uid}) "
             "RETURN a.title as article_headline, a.uid"
         )
-        # Use UNWIND to create Chunks
         data = {
             'uid': generate_short_uid('Article', config.UID_LEN),
             'title': article.title,
@@ -40,14 +38,9 @@ class NewsGraphClient:
             'language': article.lang,
             'url': article.html.responded_url
         }
-
-        # Write transactions allow the driver to handle retries and transient errors
-        record = self.driver.execute_query(
-            query, database_=self.database,
-            result_transformer_=lambda r: r.single(strict=True),
-            **data   
-        )
-        return record['a.uid']
+        records = self.query(query, **data)
+        article_id = records[0]['a.uid']
+        return article_id
         
     def merge_article_chunks(self, article_chunks: Iterable[ArticleChunk], article_id: str):
         query = (
@@ -58,17 +51,13 @@ class NewsGraphClient:
             "MERGE (a)-[:CONTAINS]->(p) "
             "RETURN a.title as article_headline, count(p) as num_paragraphs"
         )
-        record = self.driver.execute_query(
-            query, database_=self.database,
-            result_transformer_=lambda r: r.single(strict=True),
-            chunks=[chunk.to_dict(serialize=True) for chunk in article_chunks], uid=article_id
-        )
+        records = self.query(query, chunks=[chunk.to_dict(serialize=True) for chunk in article_chunks], uid=article_id)
         embeddings = {
             chunk.uid: chunk.embedding
             for chunk in article_chunks
         }
-        record = self.set_embeddings(embeddings)
-        return record
+        _ = self.set_embeddings(embeddings)
+        return records[0]
 
     def merge_article_authors(self, authors: Iterable[str], article_id: str):
         record = self._merge_simple_article_rel(authors, article_id, 'Person', 'AUTHORED', reverse=True)
@@ -87,12 +76,8 @@ class NewsGraphClient:
             "MERGE (s)-[:PUBLISHED]->(a) "
             "RETURN a.title as article_headline, s.name as source_name"
         )
-        record = self.driver.execute_query(
-            query, database_=self.database,
-            result_transformer_=lambda r: r.single(strict=True),
-            source=source.__dict__, uid=article_id
-        )
-        return record
+        records = self.query(query, source=source.__dict__, uid=article_id)
+        return records[0]
 
     def merge_mentioned_entities(self, mentioned_entities: Iterable[dict[str, str]], article_id: str):
         query = (
@@ -105,7 +90,7 @@ class NewsGraphClient:
             "WITH a, e, entity "
             "MATCH (a)-[:CONTAINS]->(p:Chunk {position: entity.chunk}) "
             "MERGE (p)-[:MENTIONS]->(e) "
-            "RETURN p, e"
+            "RETURN p.uid, e.uid"
         )
         persons, organizations, locations = [], [], []
         for entity in mentioned_entities:
@@ -125,11 +110,9 @@ class NewsGraphClient:
 
         records = []
         for entities, label in zip((persons, organizations, locations), ('Person', 'Organization', 'Location')):
-            records.extend(self.driver.execute_query(
-                query.replace('Entity', label), database_=self.database,
-                result_transformer_=lambda r: r.data('p', 'e'),
-                entities=entities, uid=article_id
-            ))
+            new_records = self.query(query.replace('Entity', label), entities=entities, uid=article_id)
+            records.extend(new_records)
+
         return records
 
     def set_embeddings(self, embeddings: dict[str, np.ndarray], node_type='Chunk', property_name='embedding'):
@@ -142,12 +125,45 @@ class NewsGraphClient:
             {'uid': uid, 'vector': embedding}
             for uid, embedding in embeddings.items()
         ]
-        record = self.driver.execute_query(
-            query, database_=self.database,
-            result_transformer_=lambda r: r.single(),
-            items=items
+        result = self.query(query, items=items)
+        return result
+
+    def get_chunks_from_article_ids(self, article_ids: Iterable[str]):
+        query = (
+            "MATCH (a:Article)-[:CONTAINS]->(c:Chunk) "
+            "WHERE a.uid IN $article_ids "
+            "RETURN a.uid as article_id, collect(c) as chunks"
         )
-        return record
+        records = self.query(query, article_ids=article_ids)
+        return records
+    
+    def lookup_mentioned_entities(self, entities: Iterable[Entity], per_entity_limit=10):
+        all_candidates = []
+        for entity in entities:
+            entity_candidates = self.get_entity_candidates(entity.name, f"{entity.label}Name", limit=per_entity_limit)
+            all_candidates.extend(entity_candidates)
+        
+        return all_candidates
+
+    def get_entity_candidates(self, input: str, index: str, limit=10) -> list[dict[str, str]]:
+        """
+        Taken from https://github.com/langchain-ai/langchain/blob/master/templates/neo4j-semantic-ollama/neo4j_semantic_ollama/utils.py
+        Retrieve a list of candidate entities from database based on the input string.
+
+        This function queries the Neo4j database using a full-text search. It takes the
+        input string, generates a full-text query, and executes this query against the
+        specified index in the database. The function returns a list of candidates
+        matching the query, with each candidate being a dictionary containing their 
+        uid, name, label and score.
+        """
+        candidate_query = (
+            "CALL db.index.fulltext.queryNodes($index, $fulltext_query, {limit: $limit}) "
+            "YIELD node, score "
+            "RETURN node.uid AS uid, node.name AS name, labels(node)[0] AS label, score"
+        )
+        ft_query = generate_full_text_query(input)
+        candidates = self.query(candidate_query, fulltext_query=ft_query, index=index, limit=limit)
+        return candidates
 
     def setup_indexes(self):
         self.setup_performance_indexes()
@@ -176,10 +192,7 @@ class NewsGraphClient:
                 f"IF NOT EXISTS FOR (n:{label}) "
                 f"{'REQUIRE' if is_unique else 'ON'} (n.{index_name}){' IS UNIQUE' if is_unique else ''}"
             )
-            _ = self.driver.execute_query(
-                query, database_=self.database,
-                result_transformer_=lambda r: r.single()
-            )
+            _ = self.query(query)
         
     def setup_fulltext_indexes(self):
         index_list = [
@@ -192,10 +205,7 @@ class NewsGraphClient:
                 f"CREATE FULLTEXT INDEX {label.lower()+property_name.title()} IF NOT EXISTS "
                 f"FOR (n:{label}) ON EACH [n.{property_name}]"
             )
-            _ = self.driver.execute_query(
-                query, database_=self.database,
-                result_transformer_=lambda r: r.single()
-            )
+            _ = self.query(query)
 
     def setup_vector_indexes(self):
         query = (
@@ -205,10 +215,7 @@ class NewsGraphClient:
             f" `vector.dimensions`: {config.EMBEDDING_SIZE}, "
             " `vector.similarity_function`: 'cosine' }}"
         )
-        _ = self.driver.execute_query(
-            query, database_=self.database,
-            result_transformer_=lambda r: r.single()
-        )
+        _ = self.query(query)
 
     def _merge_simple_article_rel(self, iterable: Iterable[str], article_id: str, node_type: str, rel_type: str, prop_name='name', reverse=False):
         iterable_with_ids = [
@@ -224,15 +231,9 @@ class NewsGraphClient:
             f"MERGE (a){'<' if reverse else ''}-[:{rel_type}]-{'' if reverse else '>'}(t) "
             "RETURN a.title as article_headline, count(t) as num_rels"
         )
-        record = self.driver.execute_query(
-            query, database_=self.database,
-            result_transformer_=lambda r: r.single(strict=False),
-            iterable=iterable_with_ids, uid=article_id
-        )
-        return record
+        records = self.query(query, iterable=iterable_with_ids, uid=article_id)
+        return records[0]
 
-    def __enter__(self):
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+    def query(self, query, **params):
+        """Simple wrapper around self.graph.query"""
+        return self.graph.query(query=query, params=params)

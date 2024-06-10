@@ -3,58 +3,69 @@ from math import ceil
 import fundus
 import fundus.scraping.article
 
+import config
 from embedding import embed_sentences
 from graph import NewsGraphClient
 from ner import EntityFinder
 from schema import ArticleChunk, ArticleChunkCategory, Iterable
-from utils import split_into_combined_sentence_chunks, generate_short_uid
+from utils import split_into_combined_sentence_chunks
 
 
 MAX_PARAGRAPH_LEN = 1100
+MAX_ARTICLES = 1000
 
-    
+
 def main():
-    publishers = fundus.PublisherCollection.de
+    publishers = (fundus.PublisherCollection.de, fundus.PublisherCollection.uk)
     crawler = fundus.Crawler(*publishers)
-    max_articles = 2
-    articles = crawler.crawl(max_articles=max_articles)
+    articles = crawler.crawl(max_articles=MAX_ARTICLES)
     db = NewsGraphClient()
     for article in articles:
-        # title, body, plaintext
-        # body contains a summary and sections, each section a headline, paragraphs
-        # lang, publishing_date, topics, authors
-        # Article: contains metadata - links to sections, Sections contain paragraphs
-        article_id = db.create_article(article=article)  # includes metadata and title
-        print(article_id)
-        article_chunks = get_chunks_from_article_body(article)
-        embeddings = embed_sentences(*(chunk.text for chunk in article_chunks))
-        for chunk, embedding in zip(article_chunks, embeddings):
-            chunk.embedding = embedding
-        
-        _ = db.merge_article_chunks(article_chunks, article_id)
-        print(_)
-        topics = article.topics  # name only (Entity Topic)
-        _ = db.merge_article_topics(topics, article_id)
-        print(_)
-        source = article.html.source_info  #publisher, type, url (Entity Source)
-        _ = db.merge_article_source(source, article_id)
-        print(_)
-        authors = article.authors or [source.publisher]  # name only (Entity Author, if empty take generic Source?)
-        _ = db.merge_article_authors(authors, article_id)
-        print(_)
-        entity_finder = EntityFinder(labels=['person', 'organization', 'location'])
-        mentioned_entities = (
-            {
-                'entity': entity,
-                'section': chunk.section,
-                'chunk': chunk_idx
-            }
-            for chunk_idx, chunk in enumerate(article_chunks)
-            for entity in entity_finder.find_entities_in_texts(chunk.text)
-        )
-        _ = db.merge_mentioned_entities(mentioned_entities, article_id)
-        for r in _:
-            print(r)
+        try:
+            # title, body, plaintext
+            # body contains a summary and sections, each section a headline, paragraphs
+            # lang, publishing_date, topics, authors
+            # Article: contains metadata - links to sections, Sections contain paragraphs
+            article_id = db.create_article(article=article)  # includes metadata and title
+            print(article_id)
+            article_chunks = get_chunks_from_article_body(article)
+            embeddings = embed_sentences(*(chunk.text for chunk in article_chunks))
+            for chunk, embedding in zip(article_chunks, embeddings):
+                chunk.embedding = embedding
+            
+            _ = db.merge_article_chunks(article_chunks, article_id)
+            print(_)
+            topics = article.topics  # name only (Entity Topic)
+            # _ = db.merge_article_topics(topics, article_id)
+            # print(_)
+            source = article.html.source_info  #publisher, type, url (Entity Source)
+            _ = db.merge_article_source(source, article_id)
+            print(_)
+            authors = article.authors or [source.publisher]  # name only (Entity Author, if empty take generic Source?)
+            _ = db.merge_article_authors(authors, article_id)
+            print(_)
+            find_and_add_entities(db, article_id, article_chunks)
+        except Exception as e:
+            with open('error_log.log', 'a') as f:
+                f.write(f"{article_id}: {e}\n{str(article)}\n")
+
+
+def find_and_add_entities(
+        db: NewsGraphClient, article_id: str, article_chunks: Iterable[ArticleChunk],
+        entity_finder=EntityFinder(labels=config.RELEVANT_LABELS)
+    ):
+    mentioned_entities = (
+        {
+            'entity': entity,
+            'section': chunk.section,
+            'chunk': chunk_idx
+        }
+        for chunk_idx, chunk in enumerate(article_chunks)
+        for entity in entity_finder.find(chunk.text)
+    )
+    _ = db.merge_mentioned_entities(mentioned_entities, article_id)
+    for r in _:
+        print(r)
 
 
 def get_chunks_from_article_body(article: fundus.scraping.article.Article) -> list[ArticleChunk]:
@@ -89,6 +100,16 @@ def ensure_max_len_of_texts(text_sequence: Iterable[str], max_len:int=MAX_PARAGR
             # In order to split evenly
             min_combination_len = int(max_len / ceil(len(text) / max_len))
             yield from split_into_combined_sentence_chunks(text, min_combination_len)
+
+
+def map_chunk_records_to_article_chunks(db, article_ids: Iterable[str]):
+    return [
+        (
+            record_from_db['article_id'],
+            (ArticleChunk(**chunk) for chunk in record_from_db['chunks'])
+        )
+        for record_from_db in db.get_chunks_from_article_ids(article_ids)
+    ]
 
 
 if __name__ == '__main__':
