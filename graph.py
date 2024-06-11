@@ -200,6 +200,7 @@ class NewsGraphClient:
             in ('Person', 'Organization', 'Location', 'Source', 'Topic')
         ]
         index_list.append(('Article', 'title'))
+        index_list.append(('Chunk', 'text'))
         for label, property_name in index_list:
             query = (
                 f"CREATE FULLTEXT INDEX {label.lower()+property_name.title()} IF NOT EXISTS "
