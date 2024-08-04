@@ -1,0 +1,11 @@
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+fundus==0.3.1
+torch==2.3.1+cpu
+neo4j==5.20.0
+gliner==0.2.2
+numpy==1.26.4
+transformers==4.41.2
+langchain==0.2.3
+langchain-community==0.2.4
+snowflake-ml-python==1.5.1
