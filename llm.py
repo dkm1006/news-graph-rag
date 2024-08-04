@@ -1,4 +1,5 @@
 # Taken from https://github.com/b-art-b/langchain-snowpoc/tree/main/langchain_snowpoc
+# Copyright lies with the initial creator, MIT licence does not apply to this part of the source
 
 import logging
 from typing import Optional
