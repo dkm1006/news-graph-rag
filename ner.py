@@ -1,4 +1,5 @@
 from gliner import GLiNER
+from haystack import component
 
 from schema import Entity, Iterable
 
@@ -8,20 +9,22 @@ PRETRAINED_CHECKPOINT = 'urchade/gliner_multi-v2.1'  # multi-lingual
 REVISION = '853ce23e47e519248ba3ec5953f002a80bffdedd'  # for GLiNER multi
 DEFAULT_LABELS = ('person', 'organization')
 
-
+@component
 class EntityFinder:
     """
     EntityFinder finds entity in texts given a set of labels for which to look
     """
+    DEFAULT_THRESHOLD = 0.5
+
     def __init__(self, labels: Iterable[str] = DEFAULT_LABELS, pretrained_checkpoint=PRETRAINED_CHECKPOINT, revision=REVISION):
         # NOTE: NuZero requires labels to be lower-cased!
         self.labels = [label.lower() for label in labels]
         self.model = GLiNER.from_pretrained(pretrained_checkpoint, revision=revision)
     
-    def find(self, *texts: str, threshold=0.5):
+    def find(self, *texts: str, threshold=DEFAULT_THRESHOLD):
         return list(self.find_iter(*texts, threshold=threshold))
 
-    def find_iter(self, *texts: str, threshold=0.5):
+    def find_iter(self, *texts: str, threshold=DEFAULT_THRESHOLD):
         for text in texts:
             new_entities = self.model.predict_entities(text, self.labels, threshold=threshold)
             new_entities = merge_entities(text, new_entities)
@@ -30,6 +33,10 @@ class EntityFinder:
                 for entity in new_entities
             )
             yield from new_entities
+    
+    @component.output_types(entities=list[Entity])
+    def run(self, text: str, threshold: float = DEFAULT_THRESHOLD):
+        return {'entities': self.find(text, threshold=threshold)}
 
 
 def merge_entities(text, entities):

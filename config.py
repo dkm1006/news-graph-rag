@@ -7,9 +7,11 @@ EMBEDDING_SIZE = 768
 EMBEDDING_MODEL_CHECKPOINT = 'jinaai/jina-embeddings-v2-base-de'
 EMBEDDING_MODEL_HASH = '5078d9924a7b3bdd9556928fcfc08b8de041bfc1'
 
+
+CHAT_MODEL = 'llama3-70b-8192'
 # NOTE: For performance refer to 
 #       https://docs.snowflake.com/user-guide/snowflake-cortex/llm-functions#small-models
-CHAT_MODEL = 'snowflake-arctic'  # fully open source
+# CHAT_MODEL = 'snowflake-arctic'  # fully open source
 # CHAT_MODEL = 'llama3-70b'  # better performance, open source w/ restrictions
 # CHAT_MODEL = 'llama3-9b'  # smaller, open source w/ restrictions
 # CHAT_MODEL = 'mistral-large'  # large european LLM, proprietary
