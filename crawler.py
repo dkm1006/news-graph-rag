@@ -12,13 +12,13 @@ from utils import split_into_combined_sentence_chunks
 
 
 MAX_PARAGRAPH_LEN = 1100
-MAX_ARTICLES = 1000
+MAX_ARTICLES = 100
 
 
-def main():
+def main(max_articles=MAX_ARTICLES):
     publishers = (fundus.PublisherCollection.de, fundus.PublisherCollection.uk)
     crawler = fundus.Crawler(*publishers)
-    articles = crawler.crawl(max_articles=MAX_ARTICLES)
+    articles = crawler.crawl(max_articles=max_articles)
     db = NewsGraphClient()
     for article in articles:
         try:

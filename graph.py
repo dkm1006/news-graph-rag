@@ -1,9 +1,9 @@
+import json
 import os
 
 import numpy as np
 from fundus.scraping.article import Article
 from fundus.scraping.html import SourceInfo
-from langchain.graphs import Neo4jGraph
 
 import config
 from schema import ArticleChunk, Entity, Iterable
@@ -137,7 +137,7 @@ class NewsGraphClient:
         records = self.query(query, article_ids=article_ids)
         return records
     
-    def lookup_mentioned_entities(self, entities: Iterable[Entity], per_entity_limit=10):
+    def lookup_mentioned_entities(self, entities: Iterable[Entity], per_entity_limit=10) -> list[dict[str, str]]:
         all_candidates = []
         for entity in entities:
             entity_candidates = self.get_entity_candidates(entity.name, f"{entity.label}Name", limit=per_entity_limit)
@@ -235,6 +235,49 @@ class NewsGraphClient:
         records = self.query(query, iterable=iterable_with_ids, uid=article_id)
         return records[0]
 
+    @property
+    def schema(self):
+        """Returns a schema string"""
+        # Obtain data on node and relationship types (JSON)
+        # nodes
+        # {
+        #   "identity": -111,
+        #   "labels": [
+        #     "Organization"
+        #   ],
+        #   "properties": {
+        #     "name": "Organization",
+        #     "indexes": [
+        #       "name"
+        #     ],
+        #     "constraints": [...]
+        #   },
+        #   "elementId": "-111"
+        # }
+        # relationships
+        # {
+        #   "identity": -107,
+        #   "start": -109,
+        #   "end": -107,
+        #   "type": "PUBLISHED",
+        #   "properties": {
+        #     "name": "PUBLISHED"
+        #   },
+        #   "elementId": "-107",
+        #   "startNodeElementId": "-109",
+        #   "endNodeElementId": "-107"
+        # }
+        node_results, relationship_results = self.query(query="CALL db.schema.visualization")
+        # Get info on node properties
+        # nodeType	nodeLabels	propertyName	propertyTypes	mandatory
+        # ":`Location`"	["Location"]	"name"	["String"]	true
+        properties = self.query(query="CALL db.schema.nodeTypeProperties")
+        # Loop through properties to build node strings
+        # Build schema string
+        schema_string = ""
+        return schema_string
+        
     def query(self, query, **params):
         """Simple wrapper around self.graph.query"""
         return self.graph.query(query=query, params=params)
+    
