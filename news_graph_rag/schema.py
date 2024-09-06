@@ -4,8 +4,8 @@ from enum import Enum
 
 import numpy as np
 
-import config
-from utils import generate_short_uid
+from news_graph_rag import config
+from news_graph_rag.utils import generate_short_uid
 
 
 class ArticleChunkCategory(Enum):
