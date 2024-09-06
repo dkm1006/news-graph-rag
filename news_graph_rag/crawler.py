@@ -3,12 +3,12 @@ from math import ceil
 import fundus
 import fundus.scraping.article
 
-import config
-from embedding import embed_sentences
-from graph import NewsGraphClient
-from ner import EntityFinder
-from schema import ArticleChunk, ArticleChunkCategory, Iterable
-from utils import split_into_combined_sentence_chunks
+from news_graph_rag import config
+from news_graph_rag.embedding import embed_sentences
+from news_graph_rag.graph import NewsGraphClient
+from news_graph_rag.ner import EntityFinder
+from news_graph_rag.schema import ArticleChunk, ArticleChunkCategory, Iterable
+from news_graph_rag.utils import split_into_combined_sentence_chunks
 
 
 MAX_PARAGRAPH_LEN = 1100
@@ -84,14 +84,14 @@ def get_chunks_from_article_body(article: fundus.scraping.article.Article) -> li
     return article_chunks
 
 
-def chunk_text_sequence(text_sequence: Iterable[str], category: ArticleChunkCategory, section_idx: int):
+def chunk_text_sequence(text_sequence: Iterable[str], category: ArticleChunkCategory, section_idx: int) -> Iterable[ArticleChunk]:
     return (
         ArticleChunk(text=text, category=category, section=section_idx)
         for text in ensure_max_len_of_texts(text_sequence)
     )
 
 
-def ensure_max_len_of_texts(text_sequence: Iterable[str], max_len:int=MAX_PARAGRAPH_LEN):
+def ensure_max_len_of_texts(text_sequence: Iterable[str], max_len:int=MAX_PARAGRAPH_LEN) -> Iterable[str]:
     """Splits texts into smaller chunks if their length is above a threshold"""
     for text in text_sequence:
         if len(text) < max_len:
@@ -102,7 +102,7 @@ def ensure_max_len_of_texts(text_sequence: Iterable[str], max_len:int=MAX_PARAGR
             yield from split_into_combined_sentence_chunks(text, min_combination_len)
 
 
-def map_chunk_records_to_article_chunks(db, article_ids: Iterable[str]):
+def map_chunk_records_to_article_chunks(db: NewsGraphClient, article_ids: Iterable[str]):
     return [
         (
             record_from_db['article_id'],

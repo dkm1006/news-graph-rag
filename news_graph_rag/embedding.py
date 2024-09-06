@@ -2,7 +2,7 @@ import numpy as np
 from transformers import AutoModel
 from numpy.linalg import norm
 
-import config
+from news_graph_rag import config
 
 
 # trust_remote_code is needed to use the encode method

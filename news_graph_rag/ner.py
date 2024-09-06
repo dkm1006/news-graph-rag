@@ -1,7 +1,7 @@
 from gliner import GLiNER
 from haystack import component
 
-from schema import Entity, Iterable
+from news_graph_rag.schema import Entity, Iterable
 
 
 PRETRAINED_CHECKPOINT = 'urchade/gliner_multi-v2.1'  # multi-lingual
@@ -36,6 +36,7 @@ class EntityFinder:
     
     @component.output_types(entities=list[Entity])
     def run(self, text: str, threshold: float = DEFAULT_THRESHOLD):
+        print(text)
         return {'entities': self.find(text, threshold=threshold)}
 
 

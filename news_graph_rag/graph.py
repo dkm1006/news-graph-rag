@@ -1,13 +1,15 @@
 import json
 import os
+from collections import defaultdict
 
 import numpy as np
 from fundus.scraping.article import Article
 from fundus.scraping.html import SourceInfo
+from neo4j import GraphDatabase
 
-import config
-from schema import ArticleChunk, Entity, Iterable
-from utils import generate_short_uid, generate_full_text_query
+from news_graph_rag import config
+from news_graph_rag.schema import ArticleChunk, Entity, Iterable
+from news_graph_rag.utils import generate_short_uid, generate_full_text_query
 
 
 # URI examples: "neo4j://localhost", "neo4j+s://xxx.databases.neo4j.io"
@@ -19,10 +21,9 @@ AUTH = (USERNAME, PASSWORD)
 
 class NewsGraphClient:
     def __init__(self, uri:str=URI, user:str=USERNAME, password:str=PASSWORD, **db_kwargs):
-        self.graph = Neo4jGraph(
-            url=uri, 
-            username=user, 
-            password=password,
+        self.graph = GraphDatabase.driver(
+            uri=uri, 
+            auth=(user, password),
             **db_kwargs
         )
     
@@ -238,46 +239,44 @@ class NewsGraphClient:
     @property
     def schema(self):
         """Returns a schema string"""
-        # Obtain data on node and relationship types (JSON)
-        # nodes
-        # {
-        #   "identity": -111,
-        #   "labels": [
-        #     "Organization"
-        #   ],
-        #   "properties": {
-        #     "name": "Organization",
-        #     "indexes": [
-        #       "name"
-        #     ],
-        #     "constraints": [...]
-        #   },
-        #   "elementId": "-111"
-        # }
-        # relationships
-        # {
-        #   "identity": -107,
-        #   "start": -109,
-        #   "end": -107,
-        #   "type": "PUBLISHED",
-        #   "properties": {
-        #     "name": "PUBLISHED"
-        #   },
-        #   "elementId": "-107",
-        #   "startNodeElementId": "-109",
-        #   "endNodeElementId": "-107"
-        # }
-        node_results, relationship_results = self.query(query="CALL db.schema.visualization")
         # Get info on node properties
-        # nodeType	nodeLabels	propertyName	propertyTypes	mandatory
-        # ":`Location`"	["Location"]	"name"	["String"]	true
-        properties = self.query(query="CALL db.schema.nodeTypeProperties")
+        property_records = self.query(query="CALL db.schema.nodeTypeProperties")
         # Loop through properties to build node strings
+        node_types = defaultdict(list)
+        for property in property_records:
+            node_label = property['nodeLabels'][0]
+            node_types[node_label].append(
+                (property['propertyName'], property['propertyTypes'])
+            )
+        # Obtain data on relationship types
+        def _make_properties_string(properties):
+            return ', '.join(f"{p[0]}: {p[1]}" for p in properties)
+        
+        results = self.query(query="CALL db.schema.visualization")
+        relationship_triples = [
+            (r.start_node['name'], r.type, r.end_node['name'])
+            for r in results[0]['relationships']
+        ]
         # Build schema string
-        schema_string = ""
+        node_type_strings = []
+        for node_type, properties in node_types.items():
+            node_type_strings.append(f"{node_type} {{{_make_properties_string(properties)}}}")
+
+        relationship_strings = [f"(:{r[0]})-[:{r[1]}]->(:{r[2]})" for r in relationship_triples]
+        schema_string = (
+            "Node properties:\n" + 
+            '\n'.join(node_type_strings) +
+            '\n\nThe relationships:\n' +
+            '\n'.join(relationship_strings)
+        )
         return schema_string
         
     def query(self, query, **params):
-        """Simple wrapper around self.graph.query"""
-        return self.graph.query(query=query, params=params)
+        """Simple wrapper around self.graph.execute_query"""
+        records, summary, columns = self.graph.execute_query(query_=query, parameters_=params)
+        results = [{column: record[column] for column in columns} for record in records]
+        return results
     
+    def close(self):
+        """Simple wrapper around self.graph.close"""
+        return self.graph.close()
