@@ -36,3 +36,17 @@ class ArticleChunk:
 class Entity:
     name: str
     label: str
+    start: int
+    end: int
+
+    @property
+    def text(self) -> str:
+        """Alias for name"""
+        return self.name
+
+
+@dataclass
+class Relation:
+    subject: Entity
+    object: Entity
+    label: str

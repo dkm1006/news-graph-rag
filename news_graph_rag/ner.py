@@ -29,14 +29,13 @@ class EntityFinder:
             new_entities = self.model.predict_entities(text, self.labels, threshold=threshold)
             new_entities = merge_entities(text, new_entities)
             new_entities = (
-                Entity(name=entity['text'], label=entity['label'])
+                Entity(name=entity['text'], label=entity['label'], start=entity['start'], end=entity['end'])
                 for entity in new_entities
             )
             yield from new_entities
     
     @component.output_types(entities=list[Entity])
     def run(self, text: str, threshold: float = DEFAULT_THRESHOLD):
-        print(text)
         return {'entities': self.find(text, threshold=threshold)}
 
 
