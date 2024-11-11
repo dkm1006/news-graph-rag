@@ -8,7 +8,7 @@ from fundus.scraping.html import SourceInfo
 from neo4j import GraphDatabase
 
 from news_graph_rag import config
-from news_graph_rag.schema import ArticleChunk, Entity, Iterable
+from news_graph_rag.schema import ArticleChunk, Entity, Iterable, Relation
 from news_graph_rag.utils import generate_short_uid, generate_full_text_query
 
 
@@ -17,6 +17,7 @@ URI = os.getenv('DB_URL', 'neo4j://localhost:7687')
 USERNAME = os.getenv('DB_USERNAME', 'neo4j')
 PASSWORD = os.getenv('DB_PASSWORD', '<secret>')
 AUTH = (USERNAME, PASSWORD)
+ENTITY_LABELS = ('Person', 'Organization', 'Location')
 
 
 class NewsGraphClient:
@@ -110,10 +111,29 @@ class NewsGraphClient:
                 locations.append(data)
 
         records = []
-        for entities, label in zip((persons, organizations, locations), ('Person', 'Organization', 'Location')):
+        for entities, label in zip((persons, organizations, locations), ENTITY_LABELS):
             new_records = self.query(query.replace('Entity', label), entities=entities, uid=article_id)
             records.extend(new_records)
 
+        return records
+
+    def merge_mentioned_relations(self, mentioned_relations: Iterable[Relation], article_id: str):
+        query = (
+            "UNWIND $relations as relation "
+            "MATCH (s:Entity {name: relation.subject}), "
+            "(o:Entity {name: relation.object}) "
+            "CALL apoc.create.relationship(s, relation.label, {mentioned_in: $uid}, o) "
+            "YIELD rel RETURN rel"
+        )
+        relations = [
+            {
+                'subject': relation.subject.text,
+                'object': relation.object.text,
+                'label': relation.label
+            }
+            for relation in mentioned_relations
+        ]
+        records = self.query(query.replace('Entity', '|'.join(ENTITY_LABELS)), relations=relations, uid=article_id)
         return records
 
     def set_embeddings(self, embeddings: dict[str, np.ndarray], node_type='Chunk', property_name='embedding'):

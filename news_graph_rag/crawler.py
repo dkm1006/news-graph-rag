@@ -7,6 +7,7 @@ from news_graph_rag import config
 from news_graph_rag.embedding import embed_sentences
 from news_graph_rag.graph import NewsGraphClient
 from news_graph_rag.ner import EntityFinder
+from news_graph_rag.relations import extract_relations
 from news_graph_rag.schema import ArticleChunk, ArticleChunkCategory, Iterable
 from news_graph_rag.utils import split_into_combined_sentence_chunks
 
@@ -34,16 +35,13 @@ def main(max_articles=MAX_ARTICLES):
                 chunk.embedding = embedding
             
             _ = db.merge_article_chunks(article_chunks, article_id)
-            print(_)
             topics = article.topics  # name only (Entity Topic)
             # _ = db.merge_article_topics(topics, article_id)
             # print(_)
             source = article.html.source_info  #publisher, type, url (Entity Source)
             _ = db.merge_article_source(source, article_id)
-            print(_)
             authors = article.authors or [source.publisher]  # name only (Entity Author, if empty take generic Source?)
             _ = db.merge_article_authors(authors, article_id)
-            print(_)
             find_and_add_entities(db, article_id, article_chunks)
         except Exception as e:
             with open('error_log.log', 'a') as f:
@@ -54,7 +52,7 @@ def find_and_add_entities(
         db: NewsGraphClient, article_id: str, article_chunks: Iterable[ArticleChunk],
         entity_finder=EntityFinder(labels=config.RELEVANT_LABELS)
     ):
-    mentioned_entities = (
+    mentioned_entities = [
         {
             'entity': entity,
             'section': chunk.section,
@@ -62,10 +60,10 @@ def find_and_add_entities(
         }
         for chunk_idx, chunk in enumerate(article_chunks)
         for entity in entity_finder.find(chunk.text)
-    )
-    _ = db.merge_mentioned_entities(mentioned_entities, article_id)
-    for r in _:
-        print(r)
+    ]
+    mentioned_relations = extract_relations([chunk.text for chunk in article_chunks])
+    _1 = db.merge_mentioned_entities(mentioned_entities, article_id)
+    _2 = db.merge_mentioned_relations(mentioned_relations, article_id)
 
 
 def get_chunks_from_article_body(article: fundus.scraping.article.Article) -> list[ArticleChunk]:
